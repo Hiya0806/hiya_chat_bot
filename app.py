@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import streamlit as st
@@ -9,15 +9,17 @@ import requests
 APP_DIR = Path(__file__).parent
 DB_PATH = APP_DIR / "chat_memory.db"
 
-GROQ_MODEL = "llama-3.1-8b-instant"
+# You can change this to any chat model available on Hugging Face
+HF_MODEL = "meta-llama/Llama-3.1-8B-Instruct"
+HF_API_URL = "https://router.huggingface.co/v1/chat/completions"
 
 st.set_page_config(
-    page_title="Harshit Chat Bot",
+    page_title="Hiya Chat Bot",
     page_icon="🤖",
     layout="centered"
 )
 
-# ================= CSS FIX (IMPORTANT) =================
+# ================= CSS FIX =================
 st.markdown("""
 <style>
 .block-container {
@@ -59,7 +61,7 @@ def save_message(session_id, role, content):
     conn.execute("""
         INSERT INTO messages (session_id, role, content, created_at)
         VALUES (?, ?, ?, ?)
-    """, (session_id, role, content, datetime.utcnow().isoformat()))
+    """, (session_id, role, content, datetime.now(timezone.utc).isoformat()))
     conn.commit()
     conn.close()
 
@@ -85,23 +87,23 @@ def clear_messages(session_id):
     conn.close()
 
 
-# ================= GROQ API =================
-def groq_chat(messages):
-    api_key = st.secrets["GROQ_API_KEY"]
+# ================= HUGGING FACE API =================
+def hf_chat(messages):
+    api_key = st.secrets["HF_API_KEY"]
 
     response = requests.post(
-        "https://api.groq.com/openai/v1/chat/completions",
+        HF_API_URL,
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         },
         json={
-            "model": GROQ_MODEL,
+            "model": HF_MODEL,
             "messages": messages,
             "temperature": 0.7,
             "max_tokens": 900
         },
-        timeout=60
+        timeout=90
     )
 
     response.raise_for_status()
@@ -143,7 +145,7 @@ def main():
 
     session_id = st.session_state.session_id
 
-    st.title("🤖 Harshit Chat Bot")
+    st.title("🤖 Hiya Chat Bot")
 
     # ================= SIDEBAR =================
     with st.sidebar:
@@ -173,12 +175,10 @@ def main():
     ])
 
     user_prompt = None
-    mode = None
 
-    # ================= TAB 1 (CHAT VIEW ONLY) =================
+    # ================= TAB 1 =================
     with tab1:
         st.write("Chat mode active. Type below 👇")
-        mode = "Chat"
 
     # ================= TAB 2 =================
     with tab2:
@@ -192,7 +192,6 @@ def main():
                 "subject": subject,
                 "level": level
             })
-            mode = "Question Generator"
 
     # ================= TAB 3 =================
     with tab3:
@@ -204,15 +203,12 @@ def main():
             user_prompt = build_prompt("Coding Assistant", {
                 "task": task
             })
-            mode = "Coding Assistant"
 
-    # ================= GLOBAL CHAT INPUT (IMPORTANT FIX) =================
+    # ================= GLOBAL CHAT INPUT =================
     user_input = st.chat_input("Type your message...")
 
-    # If normal chat mode input
-    if user_input and tab1:
+    if user_input:
         user_prompt = user_input
-        mode = "Chat"
 
     # ================= PROCESS INPUT =================
     if not user_prompt:
@@ -232,7 +228,7 @@ def main():
     with st.chat_message("assistant"):
         try:
             with st.spinner("Thinking... 🤔"):
-                reply = groq_chat(messages)
+                reply = hf_chat(messages)
 
             st.markdown(reply)
             save_message(session_id, "assistant", reply)
@@ -242,6 +238,9 @@ def main():
 
         except requests.exceptions.ConnectionError:
             st.error("Network error.")
+
+        except requests.exceptions.HTTPError as e:
+            st.error(f"API error: {e.response.status_code} - {e.response.text}")
 
         except Exception as e:
             st.error(f"Error: {str(e)}")
